@@ -6,6 +6,7 @@ Los mensajes de respuesta están en español según las reglas del proyecto.
 Los endpoints y campos están en inglés.
 """
 
+import os
 import re
 from datetime import date
 
@@ -15,7 +16,10 @@ from database import init_db, db
 from models import Student
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///students.db"
+
+# Ruta absoluta a la base de datos en el directorio del proyecto
+_basedir = os.path.abspath(os.path.dirname(__file__))
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(_basedir, "students.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Inicializar base de datos
@@ -53,13 +57,14 @@ def validar_fecha(fecha_str):
         return False
 
 
-def validar_datos_estudiante(data, parcial=False):
+def validar_datos_estudiante(data, parcial=False, exclude_id=None):
     """
     Valida los datos recibidos para crear o actualizar un estudiante.
 
     Args:
         data: Diccionario con los datos del estudiante.
         parcial: Si es True, permite campos opcionales (para PATCH).
+        exclude_id: ID del estudiante a excluir de la verificación de email único.
 
     Returns:
         tuple: (errores, datos_limpios) donde errores es un dict con
@@ -93,7 +98,10 @@ def validar_datos_estudiante(data, parcial=False):
 
     # Verificar si el correo ya está registrado (solo si se proporciona email)
     if email and not errors.get("email"):
-        existing = Student.query.filter(Student.email == email).first()
+        query = Student.query.filter(Student.email == email)
+        if exclude_id is not None:
+            query = query.filter(Student.id != exclude_id)
+        existing = query.first()
         if existing:
             errors["email"] = "El correo electrónico ya está registrado"
             return {"message": "El correo electrónico ya está registrado", "errors": errors}, None
@@ -120,7 +128,8 @@ def crear_estudiante():
     error_response, datos_limpios = validar_datos_estudiante(data)
 
     if error_response:
-        return jsonify(error_response), 400
+        codigo = 409 if "ya está registrado" in error_response.get("message", "") else 400
+        return jsonify(error_response), codigo
 
     # Convertir birth_date de string a objeto date
     fecha_nac = None
@@ -199,10 +208,11 @@ def actualizar_estudiante(student_id):
         return jsonify({"message": "Estudiante no encontrado"}), 404
 
     data = request.get_json(silent=True)
-    error_response, datos_limpios = validar_datos_estudiante(data)
+    error_response, datos_limpios = validar_datos_estudiante(data, exclude_id=student_id)
 
     if error_response:
-        return jsonify(error_response), 400
+        codigo = 409 if "ya está registrado" in error_response.get("message", "") else 400
+        return jsonify(error_response), codigo
 
     # Convertir birth_date de string a objeto date
     fecha_nac = None
@@ -243,10 +253,11 @@ def actualizar_estudiante_parcial(student_id):
         return jsonify({"message": "Estudiante no encontrado"}), 404
 
     data = request.get_json(silent=True)
-    error_response, datos_limpios = validar_datos_estudiante(data, parcial=True)
+    error_response, datos_limpios = validar_datos_estudiante(data, parcial=True, exclude_id=student_id)
 
     if error_response:
-        return jsonify(error_response), 400
+        codigo = 409 if "ya está registrado" in error_response.get("message", "") else 400
+        return jsonify(error_response), codigo
 
     # Actualizar solo los campos proporcionados
     if "name" in datos_limpios:
